@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-use-before-define */
 'use client'
 import type { FC } from 'react'
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import produce, { setAutoFreeze } from 'immer'
 import { useBoolean, useGetState } from 'ahooks'
@@ -40,6 +40,9 @@ const Main: FC<IMainProps> = () => {
   const [isUnknownReason, setIsUnknownReason] = useState<boolean>(false)
   const [promptConfig, setPromptConfig] = useState<PromptConfig | null>(null)
   const [inited, setInited] = useState<boolean>(false)
+  const [autoAskHandled, setAutoAskHandled] = useState(false)
+  const [isResponding, { setTrue: setRespondingTrue, setFalse: setRespondingFalse }] = useBoolean(false)
+  const [abortController, setAbortController] = useState<AbortController | null>(null)
   // in mobile, show sidebar by click button
   const [isShowSidebar, { setTrue: showSidebar, setFalse: hideSidebar }] = useBoolean(false)
   const [visionConfig, setVisionConfig] = useState<VisionSettings | undefined>({
@@ -48,6 +51,26 @@ const Main: FC<IMainProps> = () => {
     detail: Resolution.low,
     transfer_methods: [TransferMethod.local_file],
   })
+
+  // Track if this is the initial page load
+  const isInitialMount = useRef(true)
+
+  // Reset autoAskHandled when URL changes
+  useEffect(() => {
+    const handleUrlChange = () => {
+      setAutoAskHandled(false)
+    }
+
+    // Listen for URL changes
+    window.addEventListener('popstate', handleUrlChange)
+
+    // Reset on mount
+    setAutoAskHandled(false)
+
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange)
+    }
+  }, [])
 
   useEffect(() => {
     if (APP_INFO?.title)
@@ -270,8 +293,6 @@ const Main: FC<IMainProps> = () => {
     })()
   }, [])
 
-  const [isResponding, { setTrue: setRespondingTrue, setFalse: setRespondingFalse }] = useBoolean(false)
-  const [abortController, setAbortController] = useState<AbortController | null>(null)
   const { notify } = Toast
   const logError = (message: string) => {
     notify({ type: 'error', message })
@@ -334,7 +355,7 @@ const Main: FC<IMainProps> = () => {
     }
   }
 
-  const handleSend = async (message: string, files?: VisionFile[]) => {
+  const handleSend = useCallback(async (message: string, files?: VisionFile[]) => {
     if (isResponding) {
       notify({ type: 'info', message: t('app.errorMessage.waitForResponse') })
       return
@@ -605,7 +626,67 @@ const Main: FC<IMainProps> = () => {
         }))
       },
     })
-  }
+  }, [isResponding, currInputs, isNewConversation, currConversationId, visionConfig?.enabled])
+
+  // Handle auto ask only on initial mount
+  useEffect(() => {
+    console.log('Auto ask effect running:', {
+      isInitialMount: isInitialMount.current,
+      inited,
+      hasSetInputs,
+      autoAskMessage: new URLSearchParams(window.location.search).get('auto_ask')
+    })
+
+    // Remove the hasSetInputs check since it might be causing issues
+    if (isInitialMount.current && inited) {
+      const urlParams = new URLSearchParams(window.location.search)
+      const autoAskMessage = urlParams.get('auto_ask')
+
+      if (autoAskMessage) {
+        console.log('Processing auto ask message:', autoAskMessage)
+        // Decode the URL parameter multiple times until it can't be decoded further
+        let decodedMessage = autoAskMessage
+        let prevMessage = ''
+
+        // Keep decoding until the string doesn't change
+        while (prevMessage !== decodedMessage) {
+          prevMessage = decodedMessage
+          try {
+            decodedMessage = decodeURIComponent(decodedMessage)
+          } catch (e) {
+            // If decoding fails, use the last successful decoded value
+            decodedMessage = prevMessage
+            break
+          }
+        }
+
+        console.log('Decoded message:', decodedMessage)
+
+        // Create new chat and send message
+        handleConversationIdChange('-1')
+
+        // Wait a bit for the new chat to be created
+        setTimeout(() => {
+          console.log('Starting chat...')
+          // Start the chat with empty inputs
+          handleStartChat({})
+
+          // Wait a bit for the chat to start
+          setTimeout(() => {
+            console.log('Sending message...')
+            handleSend(decodedMessage)
+            // After handling auto_ask, remove it from URL without refreshing the page
+            const newUrl = new URL(window.location.href)
+            newUrl.searchParams.delete('auto_ask')
+            window.history.replaceState({}, '', newUrl)
+          }, 500) // Increased timeout to ensure chat is ready
+        }, 500) // Increased timeout to ensure new chat is created
+      }
+
+      // Mark initial mount as complete
+      isInitialMount.current = false
+    }
+  }, [inited, handleSend, handleConversationIdChange, handleStartChat])
 
   const handleFeedback = async (messageId: string, feedback: Feedbacktype) => {
     await updateFeedback({ url: `/messages/${messageId}/feedbacks`, body: { rating: feedback.rating } })
