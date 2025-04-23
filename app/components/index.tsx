@@ -255,8 +255,17 @@ const Main: FC<IMainProps> = () => {
           throw new Error(error)
           return
         }
-        const _conversationId = getConversationIdFromStorage(APP_ID)
-        const isNotNewConversation = conversations.some(item => item.id === _conversationId)
+
+        // Check if we have auto_ask parameter
+        const hasAutoAsk = new URLSearchParams(window.location.search).has('auto_ask')
+
+        // Only restore conversation ID from localStorage if we don't have auto_ask
+        if (!hasAutoAsk) {
+          const _conversationId = getConversationIdFromStorage(APP_ID)
+          const isNotNewConversation = conversations.some(item => item.id === _conversationId)
+          if (isNotNewConversation)
+            setCurrConversationId(_conversationId, APP_ID, false)
+        }
 
         // fetch new conversation info
         const { user_input_form, opening_statement: introduction, file_upload, system_parameters }: any = appParams
@@ -275,9 +284,6 @@ const Main: FC<IMainProps> = () => {
           image_file_size_limit: system_parameters?.system_parameters || 0,
         })
         setConversationList(conversations as ConversationItem[])
-
-        if (isNotNewConversation)
-          setCurrConversationId(_conversationId, APP_ID, false)
 
         setInited(true)
       }
@@ -630,63 +636,50 @@ const Main: FC<IMainProps> = () => {
 
   // Handle auto ask only on initial mount
   useEffect(() => {
-    console.log('Auto ask effect running:', {
-      isInitialMount: isInitialMount.current,
-      inited,
-      hasSetInputs,
-      autoAskMessage: new URLSearchParams(window.location.search).get('auto_ask')
-    })
-
-    // Remove the hasSetInputs check since it might be causing issues
+    // Only handle auto_ask on initial mount and after initialization
     if (isInitialMount.current && inited) {
       const urlParams = new URLSearchParams(window.location.search)
       const autoAskMessage = urlParams.get('auto_ask')
 
       if (autoAskMessage) {
-        console.log('Processing auto ask message:', autoAskMessage)
-        // Decode the URL parameter multiple times until it can't be decoded further
+        // Step 1: Decode URL parameter
         let decodedMessage = autoAskMessage
         let prevMessage = ''
-
-        // Keep decoding until the string doesn't change
         while (prevMessage !== decodedMessage) {
           prevMessage = decodedMessage
           try {
             decodedMessage = decodeURIComponent(decodedMessage)
           } catch (e) {
-            // If decoding fails, use the last successful decoded value
             decodedMessage = prevMessage
             break
           }
         }
+        console.log('Decoded auto_ask message:', decodedMessage)
 
-        console.log('Decoded message:', decodedMessage)
-
-        // Create new chat and send message
+        // Step 2: Click "New Chat" button by simulating the header button click
         handleConversationIdChange('-1')
 
-        // Wait a bit for the new chat to be created
+        // Step 3: After new chat UI is ready, click "Start Chat" button
         setTimeout(() => {
-          console.log('Starting chat...')
-          // Start the chat with empty inputs
+          // This simulates clicking the "Start Chat" button
           handleStartChat({})
 
-          // Wait a bit for the chat to start
+          // Step 4: After chat is started, send the message
           setTimeout(() => {
-            console.log('Sending message...')
+            // Find the chat input element and simulate sending a message
             handleSend(decodedMessage)
-            // After handling auto_ask, remove it from URL without refreshing the page
+
+            // Clean up: Remove auto_ask from URL
             const newUrl = new URL(window.location.href)
             newUrl.searchParams.delete('auto_ask')
             window.history.replaceState({}, '', newUrl)
-          }, 500) // Increased timeout to ensure chat is ready
-        }, 500) // Increased timeout to ensure new chat is created
+          }, 500)
+        }, 500)
       }
 
-      // Mark initial mount as complete
       isInitialMount.current = false
     }
-  }, [inited, handleSend, handleConversationIdChange, handleStartChat])
+  }, [inited])
 
   const handleFeedback = async (messageId: string, feedback: Feedbacktype) => {
     await updateFeedback({ url: `/messages/${messageId}/feedbacks`, body: { rating: feedback.rating } })
