@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import produce, { setAutoFreeze } from 'immer'
 import { useBoolean, useGetState } from 'ahooks'
-import useConversation from '@/hooks/use-conversation'
+import useConversation, { storageConversationIdKey } from '@/hooks/use-conversation'
 import Toast from '@/app/components/base/toast'
 import Sidebar from '@/app/components/sidebar'
 import ConfigSence from '@/app/components/config-scence'
@@ -669,10 +669,31 @@ const Main: FC<IMainProps> = () => {
             // Find the chat input element and simulate sending a message
             handleSend(decodedMessage)
 
-            // Clean up: Remove auto_ask from URL
-            const newUrl = new URL(window.location.href)
-            newUrl.searchParams.delete('auto_ask')
-            window.history.replaceState({}, '', newUrl)
+            // Step 5: After message is sent, update localStorage with new conversation ID
+            setTimeout(async () => {
+              try {
+                // Fetch latest conversations to get the new conversation ID
+                const conversationData = await fetchConversations()
+                const conversations = (conversationData as any).data
+                if (conversations && conversations.length > 0) {
+                  const newConversationId = conversations[0].id
+                  // Save the new conversation ID to localStorage
+                  const conversationIdInfo = globalThis.localStorage?.getItem(storageConversationIdKey)
+                    ? JSON.parse(globalThis.localStorage?.getItem(storageConversationIdKey) || '')
+                    : {}
+                  conversationIdInfo[APP_ID] = newConversationId
+                  globalThis.localStorage?.setItem(storageConversationIdKey, JSON.stringify(conversationIdInfo))
+                  console.log('Updated localStorage with new conversation ID:', newConversationId)
+                }
+              } catch (error) {
+                console.error('Failed to update localStorage with new conversation ID:', error)
+              }
+
+              // Clean up: Remove auto_ask from URL
+              const newUrl = new URL(window.location.href)
+              newUrl.searchParams.delete('auto_ask')
+              window.history.replaceState({}, '', newUrl)
+            }, 1000) // Wait for the message to be sent and conversation to be created
           }, 500)
         }, 500)
       }
